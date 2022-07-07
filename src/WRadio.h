@@ -43,7 +43,7 @@ const static char* POWER_OFF = "<off>";
 
 class WRadio : public WDevice {
  public:
-  WRadio(WNetwork* network, byte intPowerButton)
+  WRadio(WNetwork* network, byte intPowerButton, byte intSourceButton)
       : WDevice(network, DEVICE_ID, network->getIdx(), DEVICE_TYPE_RADIO,
                 DEVICE_TYPE_ON_OFF_SWITCH) {
     this->radio = nullptr;
@@ -97,6 +97,18 @@ class WRadio : public WDevice {
     WSwitch* powerButton = new WSwitch(intPowerButton, MODE_BUTTON);
     powerButton->setProperty(this->onProperty);
     this->addPin(powerButton);
+    //Source switch
+    WSwitch* sourceButton = new WSwitch(intSourceButton, MODE_BUTTON);
+    //sourceButton->setProperty(this->onProperty);
+    sourceButton->setOnPressed([this] {
+      byte i = this->station->getEnumIndex();
+      i++;
+      if (i > this->numberOfStations->getByte()) {
+        i = 0;
+      }
+      this->station->setString(this->station->getEnumString(i));      
+    });
+    this->addPin(sourceButton);
 
     // HtmlPages
     WPage* configPage = new WPage(this->getId(), "Configure radio");

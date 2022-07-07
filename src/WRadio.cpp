@@ -9,6 +9,7 @@
 
 #define PIN_STATUS_LED 22
 #define PIN_POWER_BUTTON 39
+#define PIN_SOURCE_BUTTON 34
 
 WNetwork *network;
 WRadio *radio;
@@ -19,7 +20,7 @@ void setup() {
   }
   network =
       new WNetwork(DEBUG, APPLICATION, VERSION, PIN_STATUS_LED, FLAG_SETTINGS);
-  radio = new WRadio(network, PIN_POWER_BUTTON);
+  radio = new WRadio(network, PIN_POWER_BUTTON, PIN_SOURCE_BUTTON);
   network->addDevice(radio);
 }
 
