@@ -6,7 +6,7 @@
 #include "WAudio.h"
 #include "WBluetooth.h"
 #include "WDevice.h"
-#include "WM8978.h"
+//#include "WM8978.h"
 #include "WSwitch.h"
 
 #define DEVICE_ID "radio"
@@ -31,15 +31,15 @@ const static char* SOURCE_BLUETOOTH = "Bluetooth";
 const static char* POWER_OFF = "<off>";
 
 // T-Audio 1.6 WM8978 I2C pins.
-#define WM8978_I2C_SDA 19
-#define WM8978_I2C_SCL 18
+//#define WM8978_I2C_SDA 19
+//#define WM8978_I2C_SCL 18
 // T-Audio 1.6 WM8978 I2S pins.
-#define WM8978_I2S_BCK 33
-#define WM8978_I2S_WS 25
-#define WM8978_I2S_DOUT 26
-#define WM8978_I2S_DIN 27
+#define I2S_BCLK 33
+#define I2S_LRCK 25
+//#define WM8978_I2S_DOUT 26
+#define I2S_DIN 27
 // T-Audio 1.6 WM8978 MCLK gpio number?
-#define WM8978_I2S_MCLKPIN GPIO_NUM_0
+//#define WM8978_I2S_MCLKPIN GPIO_NUM_0
 
 class WRadio : public WDevice {
  public:
@@ -48,11 +48,11 @@ class WRadio : public WDevice {
                 DEVICE_TYPE_ON_OFF_SWITCH) {
     this->radio = nullptr;
     this->bt = nullptr;
-    this->dac = new WM8978();
-    /* Setup wm8978 I2C interface */
+    /*this->dac = new WM8978();
+    // Setup wm8978 I2C interface
     if (!dac->begin(WM8978_I2C_SDA, WM8978_I2C_SCL)) {
       log_e("Error setting up dac.");
-    }
+    }*/
     // On
     this->onProperty = WProperty::createOnOffProperty("on", "Power");
     this->onProperty->setBoolean(false);
@@ -61,13 +61,20 @@ class WRadio : public WDevice {
         std::bind(&WRadio::onPropertyChanged, this, std::placeholders::_1));
     this->addProperty(onProperty);
     // Volume
-    this->volume = new WLevelIntProperty("volume", "Volume", 0, 20);
-    this->volume->setInteger(20);
+    this->volume = new WLevelIntProperty("volume", "Volume", 0, 21);
+    this->volume->setInteger(21);
     network->getSettings()->add(this->volume);
     this->volume->setOnChange(
         std::bind(&WRadio::volumeChanged, this, std::placeholders::_1));
     this->addProperty(this->volume);
-    this->dac->setHPvol(0, 0);
+    //this->dac->setHPvol(0, 0);
+    // BT enabled
+    this->btEnabled = WProperty::createBooleanProperty("btEnabled", "btEnabled");
+    this->btEnabled->setBoolean(false);
+    network->getSettings()->add(this->btEnabled);
+    this->btEnabled->setVisibilityMqtt(false);
+    this->btEnabled->setVisibilityWebthing(false);
+    this->addProperty(this->btEnabled);
     // BT device name
     this->btDeviceName =
         WProperty::createStringProperty("btDeviceName", "Device Name");
@@ -75,7 +82,9 @@ class WRadio : public WDevice {
     network->getSettings()->add(this->btDeviceName);
     this->btDeviceName->setOnChange(
         std::bind(&WRadio::btDeviceNameChanged, this, std::placeholders::_1));
-    this->addProperty(this->btDeviceName);
+    if (this->btEnabled->getBoolean()) {
+      this->addProperty(this->btDeviceName);
+    }
     // Streamtext
     this->streamtitle = WProperty::createStringProperty("streamtitle", "Title");
     this->addProperty(this->streamtitle);
@@ -143,7 +152,7 @@ class WRadio : public WDevice {
     if (!starting) {
       starting = true;
       byte i = this->station->getEnumIndex();
-      if (i == 0) {
+      if ((i == 0) && (this->btEnabled->getBoolean())) {
         if (this->bt == nullptr) {                    
           this->streamtitle->setString(SOURCE_BLUETOOTH);
           log_i("Bluetooth on");
@@ -161,32 +170,31 @@ class WRadio : public WDevice {
               this->streamtitle->setString(SOURCE_BLUETOOTH);
             }
           });
-          this->bt->init(WM8978_I2S_BCK, WM8978_I2S_WS, WM8978_I2S_DOUT,
-                         WM8978_I2S_MCLKPIN);
+          this->bt->init(I2S_BCLK, I2S_LRCK, I2S_DIN, I2S_PIN_NO_CHANGE);
           //this->bt->play();
+          this->bt->setVolume(0);
           unMute();
         }
-      } else if (i > 0) {
+      } else if ((i > 0) || ((i == 0) && (this->btEnabled->getBoolean()))) {
         if ((this->radio == nullptr) && (network->isWifiConnected())) {                    
-          this->streamtitle->setString(this->getStationTitle(i - 1)->c_str());
+          this->streamtitle->setString(this->getStationTitle(i - (this->btEnabled->getBoolean()))->c_str());
           log_i("Radio on");
           delay(100);
           stop();
-          this->radio = new WAudio();
+          this->radio = new WAudio();          
           this->radio->setOnChange([this]() {
             this->streamtitle->setString(this->radio->getStreamTitle().c_str());
           });
-          this->radio->init(WM8978_I2S_BCK, WM8978_I2S_WS, WM8978_I2S_DOUT,
-                            WM8978_I2S_MCLKPIN);
-          if (!this->radio->play(this->getStationUrl(i - 1)->c_str())) {
-            network->debug(F("Can't connect to '%s'"),
-                           this->getStationUrl(i - 1)->c_str());
+          this->radio->init(I2S_BCLK, I2S_LRCK, I2S_DIN, I2S_PIN_NO_CHANGE);
+          if (!this->radio->play(this->getStationUrl(i - (this->btEnabled->getBoolean()))->c_str())) {
+            network->debug(F("Can't connect to '%s'"), this->getStationUrl(i - (this->btEnabled->getBoolean()))->c_str());
             stop();
           }
           if (!this->radio->isRunning()) {
             network->debug(F("Radio not running, reason unknown"));
             stop();
           } else {
+            this->radio->setVolume(0);
             unMute();
           }
         }
@@ -220,24 +228,42 @@ class WRadio : public WDevice {
     }
   }
 
-  void mute() {
-    byte v = this->volume->getInteger() + 40;
-    while (v > 40) {
-      this->dac->setHPvol(v, v);
-      v--;
-      delay(30);
+  void mute() {    
+    byte v = this->volume->getInteger();
+    if (this->radio != nullptr) {
+      while (v > 0) {
+        this->radio->setVolume(v);
+        v--;
+        delay(30);
+      }
+      this->radio->setVolume(0);
     }
-    this->dac->setHPvol(0, 0);
+    if (this->bt != nullptr) {
+      while (v > 0) {
+        this->bt->setVolume(v);
+        v--;
+        delay(30);
+      }
+      this->bt->setVolume(0);
+    }  
   }
 
   void unMute() {
-    byte v = min(40, this->volume->getInteger() + 40);
-    this->dac->setHPvol(v, v);
-    while (v < this->volume->getInteger() + 40) {
-      v++;
-      this->dac->setHPvol(v, v);
-      delay(30);
+    byte v = 0;
+    if (this->radio != nullptr) {
+      while (v <= 21) {
+        this->radio->setVolume(v);
+        v++;
+        delay(30);
+      }
     }
+    if (this->bt != nullptr) {
+      while (v <= 21) {
+        this->bt->setVolume(v);
+        v++;
+        delay(30);
+      }
+    }  
   }
 
   void loop(unsigned long now) {
@@ -267,7 +293,7 @@ class WRadio : public WDevice {
     page->printf(HTTP_BUTTON, DEVICE_ID, "get", "Go back");
   }
 
-  virtual void printConfigPage(AsyncWebServerRequest* request, Print* page) {
+  virtual void printConfigPage(AsyncWebServerRequest* request, Print* page) {    
     // Table with already stored MAX_GPIOS
     page->printf(HTTP_DIV_ID_BEGIN, "gd");
     page->print(F("<table  class='st'>"));
@@ -310,6 +336,14 @@ class WRadio : public WDevice {
     page->printf(HTTP_DIV_END);
 
     page->printf(HTTP_CONFIG_PAGE_BEGIN, getId());
+    page->printf(HTTP_TOGGLE_GROUP_STYLE, "ga", (this->btEnabled->getBoolean() ? HTTP_CHECKED : HTTP_NONE), "gb", HTTP_NONE);
+    //BT enabled
+    page->printf(HTTP_CHECKBOX_OPTION, "bte", "bte", (this->btEnabled->getBoolean() ? HTTP_CHECKED : ""), "tg()", "Enable Bluetooth receiver");
+    page->printf(HTTP_DIV_ID_BEGIN, "ga");
+    //BT receiver name
+    page->printf(HTTP_TEXT_FIELD, "Bluetooth receiver name: ", "btn", "16", this->btDeviceName->c_str());
+    page->print(FPSTR(HTTP_DIV_END));
+    page->printf(HTTP_TOGGLE_FUNCTION_SCRIPT, "tg()", "bte", "ga", "gb");
     page->print(FPSTR(HTTP_CONFIG_SAVE_BUTTON));
   }
 
@@ -333,7 +367,11 @@ class WRadio : public WDevice {
     addStationConfigItem(request->arg("st"), request->arg("su"));
   }
 
-  void saveConfigPage(AsyncWebServerRequest* request, Print* page) {}
+  void saveConfigPage(AsyncWebServerRequest* request, Print* page) {
+    this->btEnabled->setBoolean(request->arg("bte") != HTTP_TRUE);
+    this->btDeviceName->setString(request->arg("btn").c_str());
+    //network->getSettings()->save();
+  }
 
  protected:
   WProperty* getStationTitle(byte index) {
@@ -422,8 +460,12 @@ class WRadio : public WDevice {
 
   void volumeChanged(WProperty* property) {
     network->getSettings()->save();
-    this->dac->setHPvol(this->volume->getInteger() + 40,
-                        this->volume->getInteger() + 40);
+    if (this->radio != nullptr) {        
+        this->radio->setVolume(volume->getInteger());
+      }
+      if (this->bt != nullptr) {
+        this->bt->setVolume(volume->getInteger());        
+      }
   }
 
   void btDeviceNameChanged(WProperty* property) {
@@ -433,6 +475,7 @@ class WRadio : public WDevice {
  private:
   WProperty* onProperty;
   WProperty* volume;
+  WProperty* btEnabled;
   WProperty* btDeviceName;
   WProperty* numberOfStations;
   WProperty* editingTitle;
@@ -441,7 +484,7 @@ class WRadio : public WDevice {
   WProperty* streamtitle;
   WAudio* radio;
   WBluetooth* bt;
-  WM8978* dac;
+  //WM8978* dac;
   bool stopping = false;
   bool starting = false;
 
@@ -452,7 +495,9 @@ class WRadio : public WDevice {
       this->addStationConfig();
       this->numberOfStations->setByte(i + 1);
     }
-    this->station->addEnumString(SOURCE_BLUETOOTH);
+    if (this->btEnabled->getBoolean()) {
+      this->station->addEnumString(SOURCE_BLUETOOTH);
+    }
     for (byte i = 0; i < this->numberOfStations->getByte(); i++) {
       WProperty* stationTitle = getStationTitle(i);
       this->station->addEnumString(stationTitle->c_str());

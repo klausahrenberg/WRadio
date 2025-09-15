@@ -23,7 +23,7 @@ class WAudio : public Audio {
  public:
   WAudio() : Audio(false, 3, I2S_NUM_0) {    
     wAudio = this;
-    //this->setVolume(21);
+    this->setVolume(21);
   }
 
   ~WAudio() {
@@ -41,8 +41,8 @@ class WAudio : public Audio {
     }
   }
 
-  void init(byte i2sBck, byte i2sWs, byte i2sDout, byte i2sClk) {
-    this->setPinout(i2sBck, i2sWs, i2sDout, I2S_PIN_NO_CHANGE, i2sClk);
+  void init(byte i2sBclk, byte i2sLrck, byte i2sDout, byte i2sClk) {
+    this->setPinout(i2sBclk, i2sLrck, i2sDout, I2S_PIN_NO_CHANGE, i2sClk);
   }
 
   void setOnChange(TOnStateChange onChange) { this->onChange = onChange; }

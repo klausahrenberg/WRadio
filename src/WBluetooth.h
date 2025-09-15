@@ -111,6 +111,7 @@ class WBluetooth {
       log_e("Failed to uninstall i2s");
       return;
     }
+    if(vBuffer) free(vBuffer);
     log_i("Bluetooth switched off.");
   }
 
@@ -178,6 +179,19 @@ class WBluetooth {
     }
   }
 
+  void setVolume(uint8_t vol) {
+    if (vol > 21) vol = 21;
+    m_vol = volumetable[vol];
+  }
+  //---------------------------------------------------------------------------------------------------------------------
+  uint8_t getVolume() {
+    for (uint8_t i = 0; i < 22; i++) {
+      if (volumetable[i] == m_vol) return i;
+    }
+    m_vol = 12;
+    return m_vol;
+  }
+
   void play() { execute_avrc_command(ESP_AVRC_PT_CMD_PLAY); }
 
   void pause() { execute_avrc_command(ESP_AVRC_PT_CMD_PAUSE); }
@@ -205,7 +219,7 @@ class WBluetooth {
         if (param->read_rmt_name.stat == ESP_BT_STATUS_SUCCESS) {
           log_d("ESP_BT_GAP_READ_REMOTE_NAME_EVT remote name:%s",
                 param->read_rmt_name.rmt_name);
-          this->setRemoteName((char*) param->read_rmt_name.rmt_name);
+          this->setRemoteName((char*)param->read_rmt_name.rmt_name);
           // memcpy(remote_name, param->read_rmt_name.rmt_name,
           // ESP_BT_GAP_MAX_BDNAME_LEN );
         }
@@ -221,11 +235,11 @@ class WBluetooth {
 
   void updateStreamTitle(uint8_t attrId, const char* attrText) {
     switch (attrId) {
-      case ESP_AVRC_MD_ATTR_TITLE : {
+      case ESP_AVRC_MD_ATTR_TITLE: {
         this->streamtitle = String(attrText);
         break;
       }
-      case ESP_AVRC_MD_ATTR_ARTIST : {
+      case ESP_AVRC_MD_ATTR_ARTIST: {
         String r = String(attrText);
         if (!r.equals("")) {
           r.concat(" - ");
@@ -234,7 +248,7 @@ class WBluetooth {
         this->streamtitle = r;
         break;
       }
-      default : {
+      default: {
         this->streamtitle = "";
       }
     }
@@ -243,16 +257,13 @@ class WBluetooth {
     }
   }
 
-  String getStreamTitle() {
-    return this->streamtitle;
-  }
+  String getStreamTitle() { return this->streamtitle; }
 
-  esp_a2d_audio_state_t getMediaState() {
-    return this->mediaState;
-  }
+  esp_a2d_audio_state_t getMediaState() { return this->mediaState; }
 
   bool isPlaying() {
-    return (this->mediaState == (esp_a2d_audio_state_t) APP_AV_MEDIA_STATE_STARTED);
+    return (this->mediaState ==
+            (esp_a2d_audio_state_t)APP_AV_MEDIA_STATE_STARTED);
   }
 
   void setMediaState(esp_a2d_audio_state_t mediaState) {
@@ -264,9 +275,7 @@ class WBluetooth {
     }
   }
 
-  String getRemoteName() {
-    return this->remoteName;
-  }
+  String getRemoteName() { return this->remoteName; }
 
   void setRemoteName(const char* remoteName) {
     this->remoteName = String(remoteName);
@@ -274,7 +283,35 @@ class WBluetooth {
       onChange();
     }
   }
-  
+
+  void gainVolume() {
+    if ((vBuffer) && (m_vol < 64)) {
+      float step = (float) m_vol / 64;
+      for (int i = 0; i < vBufferSize; i++) {      
+        vBuffer[i] = vBuffer[i] * step;
+      }  
+    }
+  }
+
+  void bt_app_a2d_data_cb(const uint8_t* data, uint32_t len) {
+    if ((!vBuffer) || (this->vBufferSize != len * 2)) {
+      if(vBuffer) free(vBuffer);
+      vBufferSize = len / 2;
+      vBuffer = (int16_t*) malloc(len);
+    }
+    memcpy(vBuffer, data, len);
+    gainVolume();
+    size_t i2s_bytes_written;
+    if (i2s_write(btAudio->m_i2s_num, /*(const char*) &s32*/ (void*) vBuffer, len,
+                  &i2s_bytes_written, portMAX_DELAY) != ESP_OK) {
+      log_e("i2s_write has failed");
+    }
+
+    if (i2s_bytes_written < len) {
+      log_e("Timeout: not all bytes were written to I2S");
+    }
+  }
+
   const char* btSinkName;
   QueueHandle_t queueHandle = nullptr;
   TaskHandle_t taskHandle = nullptr;
@@ -284,7 +321,6 @@ class WBluetooth {
   i2s_pin_config_t s_pin_config;
   uint8_t* remoteBda = nullptr;
   int a2dState = APP_AV_STATE_DISCONNECTED;
-  
 
  protected:
   void taskStart() {
@@ -345,6 +381,11 @@ class WBluetooth {
   String remoteName;
   esp_a2d_audio_state_t mediaState = ESP_A2D_AUDIO_STATE_STOPPED;
   TOnStateChange onChange;
+  const uint8_t volumetable[22] = {0,  1,  2,  3,  4,  6,  8,  10, 12, 14, 17,
+                                   20, 23, 27, 30, 34, 38, 43, 48, 52, 58, 64};
+  uint8_t m_vol = 64;
+  int16_t* vBuffer = NULL;
+  size_t vBufferSize = 0;
 };
 
 void bt_task_handler(void* arg) {
@@ -508,15 +549,7 @@ void bt_app_a2d_data_cb(const uint8_t* data, uint32_t len) {
   if (btAudio == nullptr) {
     return;
   }
-  size_t i2s_bytes_written;
-  if (i2s_write(btAudio->m_i2s_num, (void*)data, len, &i2s_bytes_written,
-                portMAX_DELAY) != ESP_OK) {
-    log_e("i2s_write has failed");
-  }
-
-  if (i2s_bytes_written < len) {
-    log_e("Timeout: not all bytes were written to I2S");
-  }
+  btAudio->bt_app_a2d_data_cb(data, len);
 }
 
 void bt_app_alloc_meta_buffer(esp_avrc_ct_cb_param_t* param) {
@@ -571,8 +604,10 @@ void bt_av_hdl_avrc_evt(uint16_t event, void* p_param) {
       break;
     }
     case ESP_AVRC_CT_METADATA_RSP_EVT: {
-      log_i("AVRC metadata rsp: attribute id 0x%x, %s", rc->meta_rsp.attr_id, rc->meta_rsp.attr_text);
-      btAudio->updateStreamTitle(rc->meta_rsp.attr_id, (char*) rc->meta_rsp.attr_text);      
+      log_i("AVRC metadata rsp: attribute id 0x%x, %s", rc->meta_rsp.attr_id,
+            rc->meta_rsp.attr_text);
+      btAudio->updateStreamTitle(rc->meta_rsp.attr_id,
+                                 (char*)rc->meta_rsp.attr_text);
       free(rc->meta_rsp.attr_text);
       break;
     }

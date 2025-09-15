@@ -4,8 +4,8 @@
 
 #define APPLICATION "Radio"
 #define VERSION "1.25"
-#define FLAG_SETTINGS 0x19
-#define DEBUG false
+#define FLAG_SETTINGS 0x21
+#define DEBUG true
 
 #define PIN_STATUS_LED 22
 #define PIN_POWER_BUTTON 39
@@ -16,7 +16,7 @@ WRadio *radio;
 
 void setup() {
   if (DEBUG) {
-    Serial.begin(9600);
+    Serial.begin(115200);
   }
   network =
       new WNetwork(DEBUG, APPLICATION, VERSION, PIN_STATUS_LED, FLAG_SETTINGS);
