@@ -2,12 +2,12 @@
 #define W_RADIO_H
 
 #include <Arduino.h>
-#include "WNetwork.h"
+
 #include "WAudio.h"
-#include "WBluetooth.h"
 #include "WDevice.h"
-//#include "WM8978.h"
-#include "WSwitch.h"
+#include "WM8978.h"
+#include "WNetwork.h"
+#include "hw/WSwitch.h"
 
 #define DEVICE_ID "radio"
 #define MAX_STATIONS 12
@@ -27,179 +27,125 @@ const static char HTTP_BUTTON_VALUE[] PROGMEM = R"=====(
     </form>
   </div>
 )=====";
-const static char* SOURCE_BLUETOOTH = "Bluetooth";
 const static char* POWER_OFF = "<off>";
 
 // T-Audio 1.6 WM8978 I2C pins.
-//#define WM8978_I2C_SDA 19
-//#define WM8978_I2C_SCL 18
+#define WM8978_I2C_SDA 19
+#define WM8978_I2C_SCL 18
 // T-Audio 1.6 WM8978 I2S pins.
-#define I2S_BCLK 33
-#define I2S_LRCK 25
-//#define WM8978_I2S_DOUT 26
-#define I2S_DIN 27
+#define WM8978_I2S_BCK 33
+#define WM8978_I2S_WS 25
+#define WM8978_I2S_DOUT 26
+#define WM8978_I2S_DIN 27
 // T-Audio 1.6 WM8978 MCLK gpio number?
-//#define WM8978_I2S_MCLKPIN GPIO_NUM_0
+#define WM8978_I2S_MCLKPIN GPIO_NUM_0
+
+// #external DAC
+// #define I2S_LRCK 25
+// #define I2S_DIN 26
+// #define I2S_BCLK 27
+
+struct WRadioStation {
+  WValue* url = nullptr;
+
+  WRadioStation(const char* url) {
+    this->url = new WValue(url);
+  }
+
+  virtual ~WRadioStation() {
+    if (url) delete url;
+  }
+};
 
 class WRadio : public WDevice {
  public:
-  WRadio(WNetwork* network, byte intPowerButton, byte intSourceButton)
+  WRadio(WNetwork* network)
       : WDevice(network, DEVICE_ID, network->getIdx(), DEVICE_TYPE_RADIO,
                 DEVICE_TYPE_ON_OFF_SWITCH) {
     this->radio = nullptr;
-    this->bt = nullptr;
-    /*this->dac = new WM8978();
+    this->dac = new WM8978();
     // Setup wm8978 I2C interface
-    if (!dac->begin(WM8978_I2C_SDA, WM8978_I2C_SCL)) {
-      log_e("Error setting up dac.");
-    }*/
-    // On
-    this->onProperty = WProperty::createOnOffProperty("on", "Power");
-    this->onProperty->setBoolean(false);
-    network->getSettings()->add(this->onProperty);
-    this->onProperty->setOnChange(
-        std::bind(&WRadio::onPropertyChanged, this, std::placeholders::_1));
-    this->addProperty(onProperty);
-    // Volume
-    this->volume = new WLevelIntProperty("volume", "Volume", 0, 21);
-    this->volume->setInteger(21);
-    network->getSettings()->add(this->volume);
-    this->volume->setOnChange(
-        std::bind(&WRadio::volumeChanged, this, std::placeholders::_1));
-    this->addProperty(this->volume);
-    //this->dac->setHPvol(0, 0);
-    // BT enabled
-    this->btEnabled = WProperty::createBooleanProperty("btEnabled", "btEnabled");
-    this->btEnabled->setBoolean(false);
-    network->getSettings()->add(this->btEnabled);
-    this->btEnabled->setVisibilityMqtt(false);
-    this->btEnabled->setVisibilityWebthing(false);
-    this->addProperty(this->btEnabled);
-    // BT device name
-    this->btDeviceName =
-        WProperty::createStringProperty("btDeviceName", "Device Name");
-    this->btDeviceName->setString(network->getIdx());
-    network->getSettings()->add(this->btDeviceName);
-    this->btDeviceName->setOnChange(
-        std::bind(&WRadio::btDeviceNameChanged, this, std::placeholders::_1));
-    if (this->btEnabled->getBoolean()) {
-      this->addProperty(this->btDeviceName);
+    if (dac->begin(WM8978_I2C_SDA, WM8978_I2C_SCL)) {
+      LOG->debug("DAC ok");
+    } else {
+      LOG->debug("Setting up DAC failed.");
     }
+    // On
+    this->onProperty = WProps::createOnOffProperty("Power");
+    this->onProperty->asBool(false);
+    SETTINGS->add(this->onProperty->value());
+    this->onProperty->addListener(std::bind(&WRadio::onPropertyChanged, this));
+    this->addProperty(onProperty, "on");
+    // Volume
+    this->volume = WProps::createLevelIntProperty("Volume", 0, 21);
+    this->volume->asInt(21);
+    SETTINGS->add(this->volume->value());
+    this->volume->addListener(
+        std::bind(&WRadio::volumeChanged, this));
+    this->addProperty(this->volume, "volume");
+    this->dac->setHPvol(63, 63);
     // Streamtext
-    this->streamtitle = WProperty::createStringProperty("streamtitle", "Title");
-    this->addProperty(this->streamtitle);
+    this->streamtitle = WProps::createStringProperty("Title");
+    this->addProperty(this->streamtitle, "streamtitle");
     // Station Memory
     this->editingTitle = nullptr;
     this->editingUrl = nullptr;
-    this->numberOfStations =
-        network->getSettings()->setByte("numberOfStations", 0, MAX_STATIONS);
-    this->numberOfStations->setVisibility(NONE);
-    this->addProperty(this->numberOfStations);
-    this->station = network->getSettings()->setString("station", "");
-    this->addProperty(this->station);
+    this->numberOfStations = WProps::createByteProperty()->asByte(MAX_STATIONS);
+    SETTINGS->add(this->numberOfStations->value());
+    this->numberOfStations->visibility(NONE);
+    this->addProperty(this->numberOfStations, "numberOfStations");
+    this->station = WProps::createStringProperty();
+    SETTINGS->add(this->station->value());
+    this->addProperty(this->station, "station");
     // Configure Device
     configureDevice();
-    this->station->setOnChange(
-        std::bind(&WRadio::stationChanged, this, std::placeholders::_1));
-
-    // Power switch
-    WSwitch* powerButton = new WSwitch(intPowerButton, MODE_BUTTON);
-    powerButton->setProperty(this->onProperty);
-    this->addPin(powerButton);
-    //Source switch
-    WSwitch* sourceButton = new WSwitch(intSourceButton, MODE_BUTTON);
-    //sourceButton->setProperty(this->onProperty);
-    sourceButton->setOnPressed([this] {
-      byte i = this->station->getEnumIndex();
-      i++;
-      if (i > this->numberOfStations->getByte()) {
-        i = 0;
-      }
-      this->station->setString(this->station->getEnumString(i));      
-    });
-    this->addPin(sourceButton);
+    this->station->addListener(std::bind(&WRadio::stationChanged, this));
 
     // HtmlPages
-    WPage* configPage = new WPage(this->getId(), "Configure radio");
-    configPage->setPrintPage(std::bind(&WRadio::printConfigPage, this,
-                                       std::placeholders::_1,
-                                       std::placeholders::_2));
-    configPage->setSubmittedPage(std::bind(&WRadio::saveConfigPage, this,
-                                           std::placeholders::_1,
-                                           std::placeholders::_2));
+    /*WPage* configPage = new WPage(this->id(), "Configure radio");
+    //configPage->setPrintPage(std::bind(&WRadio::printConfigPage, this, std::placeholders::_1, std::placeholders::_2));
+    //configPage->setSubmittedPage(std::bind(&WRadio::saveConfigPage, this, std::placeholders::_1, std::placeholders::_2));
     network->addCustomPage(configPage);
     // Add/Edit station
     WPage* stationPage = new WPage(HTTP_EDIT_STATION, "Add/edit station");
     stationPage->setShowInMainMenu(false);
-    stationPage->setPrintPage(std::bind(&WRadio::handleHttpEditStation, this,
-                                        std::placeholders::_1,
-                                        std::placeholders::_2));
-    stationPage->setSubmittedPage(
-        std::bind(&WRadio::handleHttpSubmitEditStation, this,
-                  std::placeholders::_1, std::placeholders::_2));
+    stationPage->setPrintPage(std::bind(&WRadio::handleHttpEditStation, this, std::placeholders::_1, std::placeholders::_2));
+    stationPage->setSubmittedPage(std::bind(&WRadio::handleHttpSubmitEditStation, this, std::placeholders::_1, std::placeholders::_2));
     stationPage->setTargetAfterSubmitting(configPage);
     network->addCustomPage(stationPage);
     // Remove station
     WPage* removeStation = new WPage(HTTP_REMOVE_STATION, "Remove station");
     removeStation->setShowInMainMenu(false);
-    removeStation->setPrintPage(
-        std::bind(&WRadio::handleHttpRemoveStationButton, this,
-                  std::placeholders::_1, std::placeholders::_2));
-    network->addCustomPage(removeStation);
+    removeStation->setPrintPage(std::bind(&WRadio::handleHttpRemoveStationButton, this, std::placeholders::_1, std::placeholders::_2));
+    network->addCustomPage(removeStation);*/
   }
 
   void play() {
     if (!starting) {
       starting = true;
-      byte i = this->station->getEnumIndex();
-      if ((i == 0) && (this->btEnabled->getBoolean())) {
-        if (this->bt == nullptr) {                    
-          this->streamtitle->setString(SOURCE_BLUETOOTH);
-          log_i("Bluetooth on");
-          delay(100);
+      if ((this->radio == nullptr) && (network()->isWifiConnected())) {
+        this->streamtitle->asString(this->getStationTitle(station->enumIndex())->asString());
+        log_i("Radio on");
+        delay(100);
+        stop();
+        this->radio = new WAudio();
+        this->radio->setOnChange([this]() {
+          this->streamtitle->asString(this->radio->getStreamTitle().c_str());
+        });
+        this->radio->init(WM8978_I2S_BCK, WM8978_I2S_WS, WM8978_I2S_DOUT, WM8978_I2S_MCLKPIN);
+        // this->radio->init(I2S_BCLK, I2S_LRCK, I2S_DIN, I2S_PIN_NO_CHANGE);
+        if (!this->radio->play("http://stream.104.6rtl.com/rtl-live/mp3-192/play.m3u")) {  // this->getStationUrl(station->enumIndex())->asString())) {
+          network()->debug(F("Can't connect to '%s'"), this->getStationUrl(station->enumIndex())->asString());
           stop();
-          this->bt = new WBluetooth(this->btDeviceName->c_str());
-          this->bt->setOnChange([this]() {
-            if (this->bt->isConnected()) {
-              if (this->bt->isPlaying()) {
-                this->streamtitle->setString(this->bt->getStreamTitle().c_str());
-              } else {
-                this->streamtitle->setString(this->bt->getRemoteName().c_str());
-              }
-            } else {
-              this->streamtitle->setString(SOURCE_BLUETOOTH);
-            }
-          });
-          this->bt->init(I2S_BCLK, I2S_LRCK, I2S_DIN, I2S_PIN_NO_CHANGE);
-          //this->bt->play();
-          this->bt->setVolume(0);
-          unMute();
-        }
-      } else if ((i > 0) || ((i == 0) && (this->btEnabled->getBoolean()))) {
-        if ((this->radio == nullptr) && (network->isWifiConnected())) {                    
-          this->streamtitle->setString(this->getStationTitle(i - (this->btEnabled->getBoolean()))->c_str());
-          log_i("Radio on");
-          delay(100);
-          stop();
-          this->radio = new WAudio();          
-          this->radio->setOnChange([this]() {
-            this->streamtitle->setString(this->radio->getStreamTitle().c_str());
-          });
-          this->radio->init(I2S_BCLK, I2S_LRCK, I2S_DIN, I2S_PIN_NO_CHANGE);
-          if (!this->radio->play(this->getStationUrl(i - (this->btEnabled->getBoolean()))->c_str())) {
-            network->debug(F("Can't connect to '%s'"), this->getStationUrl(i - (this->btEnabled->getBoolean()))->c_str());
-            stop();
-          }
+        } else {
           if (!this->radio->isRunning()) {
-            network->debug(F("Radio not running, reason unknown"));
+            network()->debug(F("Radio not running, reason unknown"));
             stop();
           } else {
             this->radio->setVolume(0);
             unMute();
           }
         }
-      } else {
-        log_i("No radio stations stored for playing");
       }
       starting = false;
     }
@@ -216,20 +162,12 @@ class WRadio : public WDevice {
         delete this->radio;
         this->radio = nullptr;
       }
-      if (this->bt != nullptr) {
-        log_i("Bluetooth off");
-        mute();
-        this->bt->stop();
-        delay(50);
-        delete this->bt;
-        this->bt = nullptr;
-      }
       stopping = false;
     }
   }
 
-  void mute() {    
-    byte v = this->volume->getInteger();
+  void mute() {
+    byte v = this->volume->asInt();
     if (this->radio != nullptr) {
       while (v > 0) {
         this->radio->setVolume(v);
@@ -238,14 +176,6 @@ class WRadio : public WDevice {
       }
       this->radio->setVolume(0);
     }
-    if (this->bt != nullptr) {
-      while (v > 0) {
-        this->bt->setVolume(v);
-        v--;
-        delay(30);
-      }
-      this->bt->setVolume(0);
-    }  
   }
 
   void unMute() {
@@ -257,18 +187,11 @@ class WRadio : public WDevice {
         delay(30);
       }
     }
-    if (this->bt != nullptr) {
-      while (v <= 21) {
-        this->bt->setVolume(v);
-        v++;
-        delay(30);
-      }
-    }  
   }
 
   void loop(unsigned long now) {
     WDevice::loop(now);
-    if (onProperty->getBoolean()) {
+    if (onProperty->asBool()) {
       play();
     } else {
       stop();
@@ -277,7 +200,9 @@ class WRadio : public WDevice {
 
   WProperty* getStreamTitle() { return this->streamtitle; }
 
-  void handleHttpRemoveStationButton(AsyncWebServerRequest* request,
+  WList<WRadioStation>* stations() { return _stations; }
+
+  /*void handleHttpRemoveStationButton(AsyncWebServerRequest* request,
                                      Print* page) {
     bool exists = (request->hasParam("station", true));
     if (exists) {
@@ -293,57 +218,57 @@ class WRadio : public WDevice {
     page->printf(HTTP_BUTTON, DEVICE_ID, "get", "Go back");
   }
 
-  virtual void printConfigPage(AsyncWebServerRequest* request, Print* page) {    
+  virtual void printConfigPage(AsyncWebServerRequest* request, Print* page) {
     // Table with already stored MAX_GPIOS
     page->printf(HTTP_DIV_ID_BEGIN, "gd");
-    page->print(F("<table  class='st'>"));
-    tr(page);
-    th(page);
+    WHtml::table(page, "st");
+    WHtml::tr(page);
+    WHtml::th(page);
     page->print("No.");
-    thEnd(page);
-    th(page);
+    WHtml::thEnd(page);
+    WHtml::th(page);
     page->print("Name");
-    thEnd(page);
-    th(page); /*Edit*/
-    if (numberOfStations->getByte() < MAX_STATIONS)
+    WHtml::thEnd(page);
+    WHtml::th(page);
+    if (numberOfStations->asByte() < MAX_STATIONS)
       page->printf(HTTP_BUTTON, HTTP_EDIT_STATION, "get", CAPTION_ADD);
-    thEnd(page);
-    th(page); /*Remove*/
-    thEnd(page);
-    trEnd(page);
+    WHtml::thEnd(page);
+    WHtml::th(page);
+    WHtml::thEnd(page);
+    WHtml::trEnd(page);
     char* pNumber = new char[2];
-    for (byte i = 0; i < this->numberOfStations->getByte(); i++) {
+    for (byte i = 0; i < this->numberOfStations->asByte(); i++) {
       WProperty* stationTitle = getStationTitle(i);
       sprintf(pNumber, "%d", i);
-      tr(page);
-      td(page);
+      WHtml::tr(page);
+      WHtml::td(page);
       page->print(pNumber);
-      tdEnd(page);
-      td(page);
+      WHtml::tdEnd(page);
+      WHtml::td(page);
       page->print(stationTitle->c_str());
-      tdEnd(page);
-      td(page);
+      WHtml::tdEnd(page);
+      WHtml::td(page);
       page->printf(HTTP_BUTTON_VALUE, HTTP_EDIT_STATION, "", pNumber,
                    CAPTION_EDIT);
-      tdEnd(page);
-      td(page);
+      WHtml::tdEnd(page);
+      WHtml::td(page);
       page->printf(HTTP_BUTTON_VALUE, HTTP_REMOVE_STATION, "cbtn", pNumber,
                    CAPTION_REMOVE);
-      tdEnd(page);
-      trEnd(page);
+      WHtml::tdEnd(page);
+      WHtml::trEnd(page);
     }
     page->print(F("</table>"));
     page->printf(HTTP_DIV_END);
 
-    page->printf(HTTP_CONFIG_PAGE_BEGIN, getId());
-    page->printf(HTTP_TOGGLE_GROUP_STYLE, "ga", (this->btEnabled->getBoolean() ? HTTP_CHECKED : HTTP_NONE), "gb", HTTP_NONE);
+    page->printf(HTTP_CONFIG_PAGE_BEGIN, id());
+    page->printf(HTTP_TOGGLE_GROUP_STYLE, "ga", (this->btEnabled->asBool() ? HTTP_CHECKED : HTTP_NONE), "gb", HTTP_NONE);
     //BT enabled
-    page->printf(HTTP_CHECKBOX_OPTION, "bte", "bte", (this->btEnabled->getBoolean() ? HTTP_CHECKED : ""), "tg()", "Enable Bluetooth receiver");
+    page->printf(HTTP_CHECKBOX_OPTION, "be", "be", (this->btEnabled->asBool() ? HTTP_CHECKED : ""), "tg()", "Enable Bluetooth receiver");
     page->printf(HTTP_DIV_ID_BEGIN, "ga");
     //BT receiver name
     page->printf(HTTP_TEXT_FIELD, "Bluetooth receiver name: ", "btn", "16", this->btDeviceName->c_str());
     page->print(FPSTR(HTTP_DIV_END));
-    page->printf(HTTP_TOGGLE_FUNCTION_SCRIPT, "tg()", "bte", "ga", "gb");
+    page->printf(HTTP_TOGGLE_FUNCTION_SCRIPT, "tg()", "be", "ga", "gb");
     page->print(FPSTR(HTTP_CONFIG_SAVE_BUTTON));
   }
 
@@ -368,33 +293,33 @@ class WRadio : public WDevice {
   }
 
   void saveConfigPage(AsyncWebServerRequest* request, Print* page) {
-    this->btEnabled->setBoolean(request->arg("bte") != HTTP_TRUE);
-    this->btDeviceName->setString(request->arg("btn").c_str());
+    this->btEnabled->asBool(request->arg("be") == HTTP_TRUE);
+    this->btDeviceName->asString(request->arg("btn").c_str());
     //network->getSettings()->save();
-  }
+  }*/
 
  protected:
-  WProperty* getStationTitle(byte index) {
+  WValue* getStationTitle(byte index) {
     char* pNumber = new char[6];
     sprintf(pNumber, DEFAULT_STATION_TITLE, index);
-    return network->getSettings()->getSetting(pNumber);
+    return SETTINGS->getById(pNumber);
   }
 
-  WProperty* getStationUrl(byte index) {
+  WValue* getStationUrl(byte index) {
     char* pNumber = new char[6];
     sprintf(pNumber, DEFAULT_STATION_URL, index);
-    return network->getSettings()->getSetting(pNumber);
+    return SETTINGS->getById(pNumber);
   }
 
-  WProperty* addStationConfig() {
-    byte index = this->numberOfStations->getByte();
+  WValue* addStationConfig() {
+    byte index = this->numberOfStations->asByte();
     char* pNumber = new char[6];
     // Title
     sprintf(pNumber, DEFAULT_STATION_TITLE, index);
-    WProperty* station = network->getSettings()->setString(pNumber, "");
+    WValue* station = SETTINGS->setString(pNumber, "");
     // Url
     sprintf(pNumber, DEFAULT_STATION_URL, index);
-    network->getSettings()->setString(pNumber, "");
+    SETTINGS->setString(pNumber, "");
     return station;
   }
 
@@ -402,22 +327,22 @@ class WRadio : public WDevice {
     char* pNumber = new char[6];
     // Title
     sprintf(pNumber, DEFAULT_STATION_TITLE, index);
-    network->getSettings()->remove(pNumber);
+    SETTINGS->remove(pNumber);
     // Url
     sprintf(pNumber, DEFAULT_STATION_URL, index);
-    network->getSettings()->remove(pNumber);
+    SETTINGS->remove(pNumber);
     char* p2 = new char[6];
-    for (int i = index + 1; i < this->numberOfStations->getByte(); i++) {
+    for (int i = index + 1; i < this->numberOfStations->asByte(); i++) {
       // Title
       sprintf(pNumber, DEFAULT_STATION_TITLE, i);
       sprintf(p2, DEFAULT_STATION_TITLE, i - 1);
-      network->getSettings()->getSetting(pNumber)->setId(p2);
-      // Url
+      // SETTINGS->getSetting(pNumber)->id(p2);
+      //  Url
       sprintf(pNumber, DEFAULT_STATION_URL, i);
       sprintf(p2, DEFAULT_STATION_URL, i - 1);
-      network->getSettings()->getSetting(pNumber)->setId(p2);
+      // SETTINGS->getSetting(pNumber)->id(p2);
     }
-    this->numberOfStations->setByte(this->numberOfStations->getByte() - 1);
+    this->numberOfStations->asByte(this->numberOfStations->asByte() - 1);
   }
 
   void updateEditingStation(AsyncWebServerRequest* request, Print* page) {
@@ -438,76 +363,64 @@ class WRadio : public WDevice {
   void ensureEditingStation() {
     if (this->editingTitle == nullptr) {
       this->editingTitle = this->addStationConfig();
-      this->editingUrl = getStationUrl(this->numberOfStations->getByte());
-      this->numberOfStations->setByte(this->numberOfStations->getByte() + 1);
+      this->editingUrl = getStationUrl(this->numberOfStations->asByte());
+      this->numberOfStations->asByte(this->numberOfStations->asByte() + 1);
     }
   }
 
-  void onPropertyChanged(WProperty* property) {
-    network->getSettings()->save();
-    if (!this->onProperty->getBoolean()) {
-      this->streamtitle->setString(POWER_OFF);
+  void onPropertyChanged() {
+    SETTINGS->save();
+    if (!this->onProperty->asBool()) {
+      this->streamtitle->asString(POWER_OFF);
     }
   }
 
-  void stationChanged(WProperty* property) {
-    network->getSettings()->save();
+  void stationChanged() {
+    SETTINGS->save();
     delay(100);
     stop();
-    this->streamtitle->setString(this->station->c_str());
+    this->streamtitle->asString(this->station->asString());
     this->play();
   }
 
-  void volumeChanged(WProperty* property) {
-    network->getSettings()->save();
-    if (this->radio != nullptr) {        
-        this->radio->setVolume(volume->getInteger());
-      }
-      if (this->bt != nullptr) {
-        this->bt->setVolume(volume->getInteger());        
-      }
-  }
-
-  void btDeviceNameChanged(WProperty* property) {
-    network->getSettings()->save();
-  }
+  void volumeChanged() {
+    SETTINGS->save();
+    if (this->radio != nullptr) {
+      this->radio->setVolume(volume->asInt());
+    }
+  }  
 
  private:
   WProperty* onProperty;
   WProperty* volume;
-  WProperty* btEnabled;
-  WProperty* btDeviceName;
   WProperty* numberOfStations;
-  WProperty* editingTitle;
-  WProperty* editingUrl;
+  WValue* editingTitle;
+  WValue* editingUrl;
   WProperty* station;
   WProperty* streamtitle;
   WAudio* radio;
-  WBluetooth* bt;
-  //WM8978* dac;
+  WM8978* dac;
   bool stopping = false;
   bool starting = false;
+  WList<WRadioStation>* _stations = new WList<WRadioStation>();
 
   void configureDevice() {
-    byte nog = this->numberOfStations->getByte();
-    this->numberOfStations->setByte(0);
+    byte nog = this->numberOfStations->asByte();
+    this->numberOfStations->asByte(0);
     for (byte i = 0; i < nog; i++) {
       this->addStationConfig();
-      this->numberOfStations->setByte(i + 1);
+      this->numberOfStations->asByte(i + 1);
     }
-    if (this->btEnabled->getBoolean()) {
-      this->station->addEnumString(SOURCE_BLUETOOTH);
-    }
-    for (byte i = 0; i < this->numberOfStations->getByte(); i++) {
-      WProperty* stationTitle = getStationTitle(i);
-      this->station->addEnumString(stationTitle->c_str());
+    for (byte i = 0; i < this->numberOfStations->asByte(); i++) {
+      WValue* stationTitle = getStationTitle(i);
+      this->station->addEnumString(stationTitle->asString());
       getStationUrl(i);
     }
     // Set station to 0, if needed
-    byte i = this->station->getEnumIndex();
-    if ((this->numberOfStations->getByte() > 0) &&
-        ((i < 0) || (i >= this->numberOfStations->getByte()))) {
-      this->station->setString(getStationTitle(0)->c_str());
+    byte i = this->station->enumIndex();
+    if ((this->numberOfStations->asByte() > 0) &&
+        ((i < 0) || (i >= this->numberOfStations->asByte()))) {
+      this->station->asString(getStationTitle(0)->asString());
     }
   }
 
@@ -518,9 +431,9 @@ class WRadio : public WDevice {
 
   void addStationConfigItem(String oTitle, String oUrl) {
     ensureEditingStation();
-    network->debug(F("save station %s: / url: %s"), oTitle, oUrl);
-    this->editingTitle->setString(oTitle.c_str());
-    this->editingUrl->setString(oUrl.c_str());
+    network()->debug(F("save station %s: / url: %s"), oTitle, oUrl);
+    this->editingTitle->asString(oTitle.c_str());
+    this->editingUrl->asString(oUrl.c_str());
     clearEditingStation();
   }
 };

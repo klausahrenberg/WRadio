@@ -1,27 +1,35 @@
-#include "WRadio.h"
 #include <Arduino.h>
+
 #include "WNetwork.h"
-
-#define APPLICATION "Radio"
-#define VERSION "1.25"
-#define FLAG_SETTINGS 0x21
-#define DEBUG true
-
-#define PIN_STATUS_LED 22
-#define PIN_POWER_BUTTON 39
-#define PIN_SOURCE_BUTTON 34
+#include "WRadio.h"
+#include "WM8978.h"
+#include "html/WRadioPage.h"
 
 WNetwork *network;
 WRadio *radio;
+//WBluetooth* bt;
 
 void setup() {
   if (DEBUG) {
     Serial.begin(115200);
   }
-  network =
-      new WNetwork(DEBUG, APPLICATION, VERSION, PIN_STATUS_LED, FLAG_SETTINGS);
-  radio = new WRadio(network, PIN_POWER_BUTTON, PIN_SOURCE_BUTTON);
+  APPLICATION = "Radio";
+  VERSION = "1.50";
+  FLAG_SETTINGS = 0x23;
+  DEBUG = true;  
+
+  network = new WNetwork(NO_LED);
+  radio = new WRadio(network);
   network->addDevice(radio);
+
+  if (psramFound()) {
+    LOG->debug(F("psram found %d"), ESP.getPsramSize());
+  } else {
+    LOG->debug(F("psram not found"));
+  }
+
+  //Web pages
+  network->addWebPage("radio", [radio](){ return new WRadioPage(radio); }, PSTR("Radio"));
 }
 
 void loop() {
