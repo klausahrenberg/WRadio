@@ -5,7 +5,7 @@
 
 #include "WAudio.h"
 #include "WDevice.h"
-#include "WM8978.h"
+//#include "WM8978.h"
 #include "WNetwork.h"
 #include "hw/WSwitch.h"
 
@@ -30,15 +30,16 @@ const static char HTTP_BUTTON_VALUE[] PROGMEM = R"=====(
 const static char* POWER_OFF = "<off>";
 
 // T-Audio 1.6 WM8978 I2C pins.
-#define WM8978_I2C_SDA 19
-#define WM8978_I2C_SCL 18
+//#define WM8978_I2C_SDA 19
+//#define WM8978_I2C_SCL 18
 // T-Audio 1.6 WM8978 I2S pins.
-#define WM8978_I2S_BCK 33
-#define WM8978_I2S_WS 25
+#define WM8978_I2S_BCK 25
+#define WM8978_I2S_LRC 27
 #define WM8978_I2S_DOUT 26
-#define WM8978_I2S_DIN 27
+#define XSMT 15
+//#define WM8978_I2S_DIN 27
 // T-Audio 1.6 WM8978 MCLK gpio number?
-#define WM8978_I2S_MCLKPIN GPIO_NUM_0
+//#define WM8978_I2S_MCLKPIN GPIO_NUM_0
 
 // #external DAC
 // #define I2S_LRCK 25
@@ -62,14 +63,19 @@ class WRadio : public WDevice {
   WRadio(WNetwork* network)
       : WDevice(network, DEVICE_ID, network->getIdx(), DEVICE_TYPE_RADIO,
                 DEVICE_TYPE_ON_OFF_SWITCH) {
+
+    pinMode(XSMT, OUTPUT);
+    
+    
+
     this->radio = nullptr;
-    this->dac = new WM8978();
+    /*this->dac = new WM8978();
     // Setup wm8978 I2C interface
     if (dac->begin(WM8978_I2C_SDA, WM8978_I2C_SCL)) {
       LOG->debug("DAC ok");
     } else {
       LOG->debug("Setting up DAC failed.");
-    }
+    }*/
     // On
     this->onProperty = WProps::createOnOffProperty("Power");
     this->onProperty->asBool(false);
@@ -83,7 +89,7 @@ class WRadio : public WDevice {
     this->volume->addListener(
         std::bind(&WRadio::volumeChanged, this));
     this->addProperty(this->volume, "volume");
-    this->dac->setHPvol(63, 63);
+    //this->dac->setHPvol(63, 63);
     // Streamtext
     this->streamtitle = WProps::createStringProperty("Title");
     this->addProperty(this->streamtitle, "streamtitle");
@@ -126,14 +132,15 @@ class WRadio : public WDevice {
       if ((this->radio == nullptr) && (network()->isWifiConnected())) {
         this->streamtitle->asString(this->getStationTitle(station->enumIndex())->asString());
         log_i("Radio on");
-        delay(100);
+        delay(100);        
         stop();
         this->radio = new WAudio();
         this->radio->setOnChange([this]() {
           this->streamtitle->asString(this->radio->getStreamTitle().c_str());
         });
-        this->radio->init(WM8978_I2S_BCK, WM8978_I2S_WS, WM8978_I2S_DOUT, WM8978_I2S_MCLKPIN);
-        // this->radio->init(I2S_BCLK, I2S_LRCK, I2S_DIN, I2S_PIN_NO_CHANGE);
+        //this->radio->init(WM8978_I2S_BCK, WM8978_I2S_WS, WM8978_I2S_DOUT, WM8978_I2S_MCLKPIN);
+        this->radio->init(WM8978_I2S_BCK, WM8978_I2S_LRC, WM8978_I2S_DOUT, I2S_PIN_NO_CHANGE);
+        digitalWrite(XSMT, HIGH);
         if (!this->radio->play("http://stream.104.6rtl.com/rtl-live/mp3-192/play.m3u")) {  // this->getStationUrl(station->enumIndex())->asString())) {
           network()->debug(F("Can't connect to '%s'"), this->getStationUrl(station->enumIndex())->asString());
           stop();
@@ -399,7 +406,7 @@ class WRadio : public WDevice {
   WProperty* station;
   WProperty* streamtitle;
   WAudio* radio;
-  WM8978* dac;
+  //WM8978* dac;
   bool stopping = false;
   bool starting = false;
   WList<WRadioStation>* _stations = new WList<WRadioStation>();
