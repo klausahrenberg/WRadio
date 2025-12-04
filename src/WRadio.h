@@ -33,10 +33,10 @@ const static char* POWER_OFF = "<off>";
 //#define WM8978_I2C_SDA 19
 //#define WM8978_I2C_SCL 18
 // T-Audio 1.6 WM8978 I2S pins.
-#define WM8978_I2S_BCK 25
-#define WM8978_I2S_LRC 27
-#define WM8978_I2S_DOUT 26
-#define XSMT 15
+#define DAC_I2S_BCK 25
+#define DAC_I2S_LRC 27
+#define DAC_I2S_DOUT 26
+#define DAC_I2S_XSMT 15
 //#define WM8978_I2S_DIN 27
 // T-Audio 1.6 WM8978 MCLK gpio number?
 //#define WM8978_I2S_MCLKPIN GPIO_NUM_0
@@ -64,11 +64,11 @@ class WRadio : public WDevice {
       : WDevice(network, DEVICE_ID, network->getIdx(), DEVICE_TYPE_RADIO,
                 DEVICE_TYPE_ON_OFF_SWITCH) {
 
-    pinMode(XSMT, OUTPUT);
+    pinMode(DAC_I2S_XSMT, OUTPUT);
     
     
 
-    this->radio = nullptr;
+    this->audio = nullptr;
     /*this->dac = new WM8978();
     // Setup wm8978 I2C interface
     if (dac->begin(WM8978_I2C_SDA, WM8978_I2C_SCL)) {
@@ -129,27 +129,26 @@ class WRadio : public WDevice {
   void play() {
     if (!starting) {
       starting = true;
-      if ((this->radio == nullptr) && (network()->isWifiConnected())) {
+      if ((this->audio == nullptr) && (network()->isWifiConnected())) {
         this->streamtitle->asString(this->getStationTitle(station->enumIndex())->asString());
         log_i("Radio on");
         delay(100);        
         stop();
-        this->radio = new WAudio();
-        this->radio->setOnChange([this]() {
-          this->streamtitle->asString(this->radio->getStreamTitle().c_str());
+        this->audio = new WAudio();
+        this->audio->setOnChange([this]() {
+          this->streamtitle->asString(this->audio->getStreamTitle().c_str());
         });
-        //this->radio->init(WM8978_I2S_BCK, WM8978_I2S_WS, WM8978_I2S_DOUT, WM8978_I2S_MCLKPIN);
-        this->radio->init(WM8978_I2S_BCK, WM8978_I2S_LRC, WM8978_I2S_DOUT, I2S_PIN_NO_CHANGE);
-        digitalWrite(XSMT, HIGH);
-        if (!this->radio->play("http://stream.104.6rtl.com/rtl-live/mp3-192/play.m3u")) {  // this->getStationUrl(station->enumIndex())->asString())) {
+        this->audio->setPinout(DAC_I2S_BCK, DAC_I2S_LRC, DAC_I2S_DOUT);
+        digitalWrite(DAC_I2S_XSMT, HIGH);
+        if (!this->audio->play("http://stream.104.6rtl.com/rtl-live/mp3-192/play.m3u")) {  // this->getStationUrl(station->enumIndex())->asString())) {
           network()->debug(F("Can't connect to '%s'"), this->getStationUrl(station->enumIndex())->asString());
           stop();
         } else {
-          if (!this->radio->isRunning()) {
+          if (!this->audio->isRunning()) {
             network()->debug(F("Radio not running, reason unknown"));
             stop();
           } else {
-            this->radio->setVolume(0);
+            this->audio->setVolume(0);
             unMute();
           }
         }
@@ -161,13 +160,13 @@ class WRadio : public WDevice {
   void stop() {
     if (!stopping) {
       stopping = true;
-      if (this->radio != nullptr) {
+      if (this->audio != nullptr) {
         log_i("Radio off");
         mute();
-        this->radio->stopSong();
+        this->audio->stopSong();
         delay(50);
-        delete this->radio;
-        this->radio = nullptr;
+        delete this->audio;
+        this->audio = nullptr;
       }
       stopping = false;
     }
@@ -175,21 +174,21 @@ class WRadio : public WDevice {
 
   void mute() {
     byte v = this->volume->asInt();
-    if (this->radio != nullptr) {
+    if (this->audio != nullptr) {
       while (v > 0) {
-        this->radio->setVolume(v);
+        this->audio->setVolume(v);
         v--;
         delay(30);
       }
-      this->radio->setVolume(0);
+      this->audio->setVolume(0);
     }
   }
 
   void unMute() {
     byte v = 0;
-    if (this->radio != nullptr) {
+    if (this->audio != nullptr) {
       while (v <= 21) {
-        this->radio->setVolume(v);
+        this->audio->setVolume(v);
         v++;
         delay(30);
       }
@@ -198,6 +197,10 @@ class WRadio : public WDevice {
 
   void loop(unsigned long now) {
     WDevice::loop(now);
+    if (this->audio != nullptr) {
+      audio->loop();
+      vTaskDelay(1);
+    }
     if (onProperty->asBool()) {
       play();
     } else {
@@ -392,8 +395,8 @@ class WRadio : public WDevice {
 
   void volumeChanged() {
     SETTINGS->save();
-    if (this->radio != nullptr) {
-      this->radio->setVolume(volume->asInt());
+    if (this->audio != nullptr) {
+      this->audio->setVolume(volume->asInt());
     }
   }  
 
@@ -405,7 +408,7 @@ class WRadio : public WDevice {
   WValue* editingUrl;
   WProperty* station;
   WProperty* streamtitle;
-  WAudio* radio;
+  WAudio* audio;
   //WM8978* dac;
   bool stopping = false;
   bool starting = false;

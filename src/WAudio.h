@@ -6,7 +6,7 @@
 
 class WAudio;
 WAudio* wAudio = nullptr;
-void audioTask(void* parameter);
+//void audioTask(void* parameter);
 
 struct audioMessage {
   uint8_t cmd;
@@ -21,9 +21,9 @@ typedef std::function<void(void)> TOnStateChange;
 
 class WAudio : public Audio {
  public:
-  WAudio() : Audio(false, 3, I2S_NUM_0) {    
+  WAudio() : Audio(I2S_NUM_0) {    
     wAudio = this;
-    this->setVolume(21);
+    this->setVolume(21); 
   }
 
   ~WAudio() {
@@ -41,14 +41,10 @@ class WAudio : public Audio {
     }
   }
 
-  void init(byte i2sBclk, byte i2sLrck, byte i2sDout, byte i2sClk) {
-    this->setPinout(i2sBclk, i2sLrck, i2sDout, I2S_PIN_NO_CHANGE, i2sClk);
-  }
-
   void setOnChange(TOnStateChange onChange) { this->onChange = onChange; }
 
   bool play(String url) {
-    if (xHandle == nullptr) {
+    /*if (xHandle == nullptr) {
       audioSetQueue = xQueueCreate(10, sizeof(struct audioMessage));
       audioGetQueue = xQueueCreate(10, sizeof(struct audioMessage));
       xTaskCreatePinnedToCore(
@@ -59,7 +55,7 @@ class WAudio : public Audio {
           (configMAX_PRIORITIES - 3), // Priority of the task 2 | portPRIVILEGE_BIT
           &xHandle,  // Task handle.
           tskNO_AFFINITY);
-    }
+    }*/
 
     return this->connecttohost(url.c_str());
   }
@@ -93,7 +89,7 @@ class WAudio : public Audio {
 
  private:
   String streamtitle;
-  TOnStateChange onChange;
+  TOnStateChange onChange = nullptr;
 };
 
 void audio_showstreamtitle(const char* info) {
@@ -148,7 +144,7 @@ void audio_eof_speech(const char *info){
 // audioTask
 
 
-
+/*
 void audioTask(void* parameter) {
   if (!wAudio->audioSetQueue || !wAudio->audioGetQueue) {
     log_e("queues are not initialized");
@@ -185,6 +181,6 @@ void audioTask(void* parameter) {
     }
     wAudio->loop();
   }
-}
+}*/
 
 #endif
